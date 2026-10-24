@@ -17,7 +17,21 @@ def locations():
     if raw:
         parsed=json.loads(raw)
         return [{'name':str(p.get('name','Location')),'lat':float(p['lat']),'lon':float(p['lon'])} for p in parsed]
-    return [{'name':'North Smithfield, RI','lat':float(os.getenv('WEATHERMIND_LAT','41.96')),'lon':float(os.getenv('WEATHERMIND_LON','-71.55'))}]
+    home={'name':'North Smithfield, RI','lat':float(os.getenv('WEATHERMIND_LAT','41.96')),'lon':float(os.getenv('WEATHERMIND_LON','-71.55'))}
+    endpoint=os.getenv('WEATHERMIND_REGISTRY_URL','').rstrip('/')
+    token=os.getenv('WEATHERMIND_REGISTRY_TOKEN','')
+    if not endpoint or not token:return [home]
+    try:
+        req=urllib.request.Request(endpoint+'/locations',headers={'Authorization':'Bearer '+token,'User-Agent':AGENT})
+        with urllib.request.urlopen(req,timeout=25) as response:remote=json.load(response)
+        result=[home];seen={key(home)}
+        for loc in remote[:80]:
+            candidate={'name':str(loc.get('name','GPS area')),'lat':float(loc['lat']),'lon':float(loc['lon'])}
+            if key(candidate) not in seen:result.append(candidate);seen.add(key(candidate))
+        return result
+    except Exception as error:
+        print('Location registry unavailable; running home location only:',str(error)[:120])
+        return [home]
 def key(loc):return f"{loc['lat']:.3f},{loc['lon']:.3f}"
 def baseline(period):
     out={}
@@ -104,7 +118,9 @@ def main():
     for loc in locs:
         loc_key=key(loc)
         rows=[r for r in state['forecasts'] if r.get('location_key')==loc_key and r.get('source')=='NWS']
-        point=api(f"https://api.weather.gov/points/{loc['lat']:.4f},{loc['lon']:.4f}")['properties']
+        try:point=api(f"https://api.weather.gov/points/{loc['lat']:.4f},{loc['lon']:.4f}")['properties']
+        except Exception as error:
+            print('Skipping unsupported location:',loc_key,str(error)[:100]);continue
         hourly=api(point['forecastHourly'])['properties']['periods']
         stations=api(point['observationStations']).get('observationStations',[])
         verify(rows,observed(stations),now)
