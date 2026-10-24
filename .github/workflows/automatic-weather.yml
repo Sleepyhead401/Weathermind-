@@ -1,0 +1,39 @@
+name: WeatherMind Hourly Learning
+
+on:
+  schedule:
+    - cron: '21 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weathermind-learning
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download WeatherMind
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Forecast and evaluate
+        run: python engine.py
+
+      - name: Save forecast history
+        run: |
+          git config user.name "weathermind-bot"
+          git config user.email "weathermind-bot@users.noreply.github.com"
+          git add data/history.json docs/data.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update WeatherMind forecasts"
+            git push
+          fi
