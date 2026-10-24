@@ -130,7 +130,7 @@ def main():
                 row['_counted_'+field]=True
     manage_storage(state)
     # Use compact serialization for both active history and published dashboard.
-    payload=json.dumps(state,separators=(',',':'))+'\\n'
+    payload=json.dumps(state,separators=(',',':'))+chr(10)
     HISTORY.write_text(payload);PUBLIC.write_text(payload)
     print('Forecasts',len(rows),'last target',target_str)
 if __name__=='__main__':main()
