@@ -4,10 +4,10 @@
 <div class="card"><div class="tag" id="place">North Smithfield, RI • default location</div><h2 id="now">Loading NOAA forecasts…</h2><div class="grid"><div class="tile">Temperature<strong id="temp">--</strong></div><div class="tile">Wind<strong id="wind">--</strong></div><div class="tile">Rain chance<strong id="rain">--</strong></div></div><p id="status" class="muted"></p></div>
 <div class="card"><h2>🕒 Hourly forecast</h2><div class="scroll" id="hours">Loading…</div></div>
 <div class="card"><h2>📅 Seven-day forecast</h2><div id="days">Loading…</div></div>
-<div class="card"><h2>🤖 WeatherMind vs NOAA</h2><div id="comparison" class="grid">Waiting for new learned predictions…</div><p class="muted" id="compareNote">Learning corrections activate only after forward-tested evidence of better accuracy.</p></div><div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind maintains independent training histories for each location configured in its scheduled engine. GPS forecasts work anywhere supported by NOAA, but a new location must be configured for scheduled learning.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
+<div class="card"><h2>🤖 WeatherMind vs NOAA</h2><div id="comparison" class="grid">Waiting for new learned predictions…</div><p class="muted" id="compareNote">Learning corrections activate only after forward-tested evidence of better accuracy.</p></div><div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind maintains independent training histories for each location configured in its scheduled engine. GPS locations also get a separate on-device learning history when you visit the dashboard. Automatic server-side learning still requires location configuration.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
 <p class="muted">NOAA forecast estimates are not current station measurements. Learned predictions are tracked separately in the background engine. Forecast coverage is limited to NWS-supported locations in the United States.</p>
 </main><script>
-const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;let lastHistory=null;
+const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;let lastHistory=null;let currentPoint=null;
 function date(s){return new Date(s).toLocaleString([],{weekday:'short',hour:'numeric'});}
 function value(v){return v===null||v===undefined?'--':v;}
 function wind(p){return p.windSpeed||'--';}
@@ -17,18 +17,71 @@ el('status').textContent='Contacting NOAA…';
 try{
 const point=(await get('https://api.weather.gov/points/'+lat.toFixed(4)+','+lon.toFixed(4))).properties;
 const [hourly,daily]=await Promise.all([get(point.forecastHourly),get(point.forecast)]);
-const h=hourly.properties.periods,d=daily.properties.periods;
+currentPoint=point;const h=hourly.properties.periods,d=daily.properties.periods;
 if(!h.length)throw Error('No hourly forecast available');
 el('now').textContent=h[0].shortForecast;el('temp').textContent=h[0].temperature+'°'+h[0].temperatureUnit;el('wind').textContent=wind(h[0]);el('rain').textContent=value(h[0].probabilityOfPrecipitation?.value)+'%';
 el('hours').innerHTML=h.slice(0,24).map(p=>'<div class="hour"><small>'+date(p.startTime)+'</small><h3>'+p.temperature+'°'+p.temperatureUnit+'</h3><div>'+p.shortForecast+'</div><small>💧 '+value(p.probabilityOfPrecipitation?.value)+'% • '+wind(p)+'</small></div>').join('');
 el('days').innerHTML=d.slice(0,14).map(p=>'<div class="day"><b>'+p.name+'</b> • '+p.temperature+'°'+p.temperatureUnit+' • '+p.shortForecast+' • 💧 '+value(p.probabilityOfPrecipitation?.value)+'%</div>').join('');
-el('status').textContent='NOAA forecast refreshed '+new Date().toLocaleTimeString();
+await learnLocal(h,point);el('status').textContent='NOAA forecast refreshed '+new Date().toLocaleTimeString();
 }catch(e){el('status').textContent=e.message;el('status').className='error';el('hours').textContent='Forecast temporarily unavailable.';el('days').textContent='Try again later.';}
 }
-async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;lastHistory=d;showComparison();el('history').textContent='Last learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
+async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;lastHistory=d;showComparison();if(!localState().records.length)el('history').textContent='Last server learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
 el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh();showComparison()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
-function showComparison(){
-const data=lastHistory,loc=(data?.locations||[]).find(l=>Math.abs(l.lat-lat)<.01&&Math.abs(l.lon-lon)<.01);
+
+function gpsKey(){return 'weathermind-gps-v1:'+lat.toFixed(2)+','+lon.toFixed(2);}
+function localState(){try{const v=JSON.parse(localStorage.getItem(gpsKey()));return v&&Array.isArray(v.records)?v:{records:[]};}catch{return {records:[]};}}
+function saveLocal(state){try{localStorage.setItem(gpsKey(),JSON.stringify(state));}catch(e){el('history').textContent='Browser storage unavailable. GPS learning history cannot be saved.';}}
+function corrected(records,target){
+const earlier=records.filter(r=>r.target<target&&Number.isFinite(r.actual));
+if(earlier.length<4)return 0;
+let weighted=0,total=0;
+for(const r of earlier){const age=(new Date(target)-new Date(r.target))/86400000;const w=Math.exp(-Math.max(0,age)/90);weighted+=w*(r.actual-r.base);total+=w;}
+return Math.max(-10,Math.min(10,weighted/total*earlier.length/(earlier.length+12)));
+}
+function localApproval(records,target){
+const done=records.filter(r=>r.target<target&&Number.isFinite(r.actual)).sort((a,b)=>a.target.localeCompare(b.target));
+const tests=[];
+for(let i=4;i<done.length;i++){const r=done[i];tests.push([Math.abs(r.base+corrected(done.slice(0,i),r.target)-r.actual),Math.abs(r.base-r.actual)]);}
+const last=tests.slice(-40);if(last.length<12)return false;
+return last.reduce((n,p)=>n+p[0],0)<.98*last.reduce((n,p)=>n+p[1],0);
+}
+async function learnLocal(hours,point){
+const state=localState(),records=state.records,now=Date.now();
+const due=records.filter(r=>!Number.isFinite(r.actual)&&new Date(r.target).getTime()<now-45*60000);
+if(due.length){
+try{
+const stationData=await get(point.observationStations),stations=(stationData.observationStations||[]).slice(0,3);
+let observations=[];
+for(const station of stations){try{const result=await get(station+'/observations?limit=150');observations.push(...(result.features||[]));}catch(e){}}
+for(const row of due){
+const nearby=observations.map(o=>o.properties).filter(p=>p?.timestamp&&Math.abs(new Date(p.timestamp).getTime()-new Date(row.target).getTime())<=45*60000&&Number.isFinite(p.temperature?.value)).sort((a,b)=>Math.abs(new Date(a.timestamp)-new Date(row.target))-Math.abs(new Date(b.timestamp)-new Date(row.target)));
+if(nearby.length)row.actual=Math.round((nearby[0].temperature.value*1.8+32)*100)/100;
+}
+}catch(e){console.warn('GPS verification unavailable',e);}
+}
+const target=new Date(Math.ceil((now+6*3600000)/3600000)*3600000);
+const period=hours.find(p=>new Date(p.startTime)<=target&&new Date(p.endTime)>target);
+if(period&&!records.some(r=>r.target===target.toISOString())){
+const base=period.temperatureUnit==='F'?Number(period.temperature):Number(period.temperature)*1.8+32;
+if(Number.isFinite(base)){const approved=localApproval(records,target.toISOString());const delta=approved?corrected(records,target.toISOString()):0;
+records.push({created:new Date().toISOString(),target:target.toISOString(),base,pred:Math.round((base+delta)*100)/100,actual:null,approved});}
+}
+state.records=records.filter(r=>now-new Date(r.target).getTime()<365*86400000).slice(-3000);
+saveLocal(state);showComparison();
+}
+function renderLocal(state){
+const rows=state.records,verified=rows.filter(r=>Number.isFinite(r.actual));
+const future=rows.filter(r=>new Date(r.target)>new Date()).sort((a,b)=>a.target.localeCompare(b.target));
+const r=future[0];
+el('comparison').innerHTML=r?'<div class="tile"><small>GPS local • 6h • '+new Date(r.target).toLocaleString()+'</small><div>NOAA: '+r.base+'°F</div><strong>WeatherMind: '+r.pred+'°F</strong><small>'+(r.approved?'Correction validated':'NOAA baseline until validated')+'</small></div>':'Waiting for the first six-hour prediction.';
+el('saved').textContent=rows.length;el('verified').textContent=verified.length;
+const mae=field=>verified.length?(verified.reduce((n,r)=>n+Math.abs(r[field]-r.actual),0)/verified.length).toFixed(2)+'°F':'Training';
+el('model').textContent=mae('pred');el('baseline').textContent=mae('base');
+el('compareNote').textContent='GPS learning is stored only in this browser and checked when this page is opened or refreshed. It cannot run in the background while the page is closed.';
+el('history').textContent='Local GPS history for this area: '+rows.length+' predictions, '+verified.length+' verified. Clearing browser data deletes this local history.';
+}
+\nfunction showComparison(){
+const local=localState();if(local.records.length){renderLocal(local);return;}const data=lastHistory,loc=(data?.locations||[]).find(l=>Math.abs(l.lat-lat)<.01&&Math.abs(l.lon-lon)<.01);
 if(!loc){el('comparison').textContent='This location has a live NOAA forecast, but no scheduled WeatherMind learning history yet. Add it to WEATHERMIND_LOCATIONS to enable independent training.';return;}
 const k=loc.lat.toFixed(3)+','+loc.lon.toFixed(3);
 const records=(data.forecasts||[]).filter(r=>r.source==='NWS'&&r.location_key===k&&new Date(r.target)>new Date()).sort((a,b)=>new Date(a.target)-new Date(b.target));
