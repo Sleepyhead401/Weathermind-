@@ -1,10 +1,31 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>WeatherMind</title>
-</head>
-<body>
-  <h1>WeatherMind 🌦️</h1>
-  <p>My personal weather-learning system.</p>
-</body>
-</html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeatherMind NOAA</title><style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#091728;color:#f2f7ff}body{margin:0;background:linear-gradient(#123d60,#091728 360px);min-height:100vh}main{max-width:900px;margin:auto;padding:24px 15px}h1{font-size:2.5rem;margin:8px 0}.muted{color:#b7c9d9}.card{background:#ffffff10;border:1px solid #ffffff22;border-radius:20px;padding:20px;margin:17px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px}.tile,.hour{background:#ffffff10;padding:14px;border-radius:13px}.tile strong{display:block;font-size:1.5rem;margin-top:7px}button{background:#257db5;border:0;border-radius:10px;color:white;padding:11px 15px;font-weight:700}.row{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap}.scroll{display:flex;overflow-x:auto;gap:10px}.hour{min-width:155px}.day{border-top:1px solid #ffffff20;padding:12px 0}.tag{color:#98e5c6}.error{color:#ffb9b9}small{color:#b7c9d9}</style></head><body><main>
+<div class="row"><div><h1>🌦️ WeatherMind</h1><div class="muted">Powered by NOAA / National Weather Service</div></div><button id="gps">📍 Use my location</button></div>
+<div class="card"><div class="tag" id="place">North Smithfield, RI • default location</div><h2 id="now">Loading NOAA forecasts…</h2><div class="grid"><div class="tile">Temperature<strong id="temp">--</strong></div><div class="tile">Wind<strong id="wind">--</strong></div><div class="tile">Rain chance<strong id="rain">--</strong></div></div><p id="status" class="muted"></p></div>
+<div class="card"><h2>🕒 Hourly forecast</h2><div class="scroll" id="hours">Loading…</div></div>
+<div class="card"><h2>📅 Seven-day forecast</h2><div id="days">Loading…</div></div>
+<div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind learns from verified NOAA observations for its configured home location. GPS forecasts for other locations do not yet have independent learning histories.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
+<p class="muted">NOAA forecast estimates are not current station measurements. Learned predictions are tracked separately in the background engine. Forecast coverage is limited to NWS-supported locations in the United States.</p>
+</main><script>
+const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;
+function date(s){return new Date(s).toLocaleString([],{weekday:'short',hour:'numeric'});}
+function value(v){return v===null||v===undefined?'--':v;}
+function wind(p){return p.windSpeed||'--';}
+async function get(url){const r=await fetch(url,{headers:{Accept:'application/geo+json'}});if(!r.ok)throw Error('NOAA returned HTTP '+r.status);return r.json();}
+async function refresh(){
+el('status').textContent='Contacting NOAA…';
+try{
+const point=(await get('https://api.weather.gov/points/'+lat.toFixed(4)+','+lon.toFixed(4))).properties;
+const [hourly,daily]=await Promise.all([get(point.forecastHourly),get(point.forecast)]);
+const h=hourly.properties.periods,d=daily.properties.periods;
+if(!h.length)throw Error('No hourly forecast available');
+el('now').textContent=h[0].shortForecast;el('temp').textContent=h[0].temperature+'°'+h[0].temperatureUnit;el('wind').textContent=wind(h[0]);el('rain').textContent=value(h[0].probabilityOfPrecipitation?.value)+'%';
+el('hours').innerHTML=h.slice(0,24).map(p=>'<div class="hour"><small>'+date(p.startTime)+'</small><h3>'+p.temperature+'°'+p.temperatureUnit+'</h3><div>'+p.shortForecast+'</div><small>💧 '+value(p.probabilityOfPrecipitation?.value)+'% • '+wind(p)+'</small></div>').join('');
+el('days').innerHTML=d.slice(0,14).map(p=>'<div class="day"><b>'+p.name+'</b> • '+p.temperature+'°'+p.temperatureUnit+' • '+p.shortForecast+' • 💧 '+value(p.probabilityOfPrecipitation?.value)+'%</div>').join('');
+el('status').textContent='NOAA forecast refreshed '+new Date().toLocaleTimeString();
+}catch(e){el('status').textContent=e.message;el('status').className='error';el('hours').textContent='Forecast temporarily unavailable.';el('days').textContent='Try again later.';}
+}
+async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;el('saved').textContent=(d.forecasts||[]).filter(r=>r.source==='NWS').length;el('verified').textContent=m?.verified??0;el('model').textContent=m?.model_mae==null?'Training':m.model_mae+'°F';el('baseline').textContent=m?.baseline_mae==null?'Training':m.baseline_mae+'°F';el('history').textContent='Last learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
+el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
+refresh();history();setInterval(()=>{refresh();history()},3600000);
+</script></body></html>
