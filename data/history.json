@@ -1,0 +1,73 @@
+{
+  "version": 3,
+  "location": [
+    41.96,
+    -71.55
+  ],
+  "forecasts": [
+    {
+      "created": "2026-10-24T16:45:04.358316+00:00",
+      "target": "2026-10-24T22:00+00:00",
+      "base": {
+        "temperature": 52.9,
+        "rain": 0.0,
+        "wind": 3.0,
+        "pressure": 1032.0
+      },
+      "pred": {
+        "temperature": 52.9,
+        "rain": 0,
+        "wind": 3.0,
+        "pressure": 1032.0
+      },
+      "actual": {},
+      "validation": {
+        "temperature": {
+          "status": "collecting_evidence",
+          "tested": 0
+        },
+        "rain": {
+          "status": "collecting_evidence",
+          "tested": 0
+        },
+        "wind": {
+          "status": "collecting_evidence",
+          "tested": 0
+        },
+        "pressure": {
+          "status": "collecting_evidence",
+          "tested": 0
+        }
+      }
+    }
+  ],
+  "last_run": "2026-10-24T16:45:04.358316+00:00",
+  "units": {
+    "temperature": "\u00b0F",
+    "rain": "mm",
+    "wind": "mph",
+    "pressure": "hPa"
+  },
+  "metrics": {
+    "temperature": {
+      "verified": 0,
+      "model_mae": null,
+      "baseline_mae": null
+    },
+    "rain": {
+      "verified": 0,
+      "model_mae": null,
+      "baseline_mae": null
+    },
+    "wind": {
+      "verified": 0,
+      "model_mae": null,
+      "baseline_mae": null
+    },
+    "pressure": {
+      "verified": 0,
+      "model_mae": null,
+      "baseline_mae": null
+    }
+  }
+}
