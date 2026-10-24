@@ -4,10 +4,10 @@
 <div class="card"><div class="tag" id="place">North Smithfield, RI • default location</div><h2 id="now">Loading NOAA forecasts…</h2><div class="grid"><div class="tile">Temperature<strong id="temp">--</strong></div><div class="tile">Wind<strong id="wind">--</strong></div><div class="tile">Rain chance<strong id="rain">--</strong></div></div><p id="status" class="muted"></p></div>
 <div class="card"><h2>🕒 Hourly forecast</h2><div class="scroll" id="hours">Loading…</div></div>
 <div class="card"><h2>📅 Seven-day forecast</h2><div id="days">Loading…</div></div>
-<div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind learns from verified NOAA observations for its configured home location. GPS forecasts for other locations do not yet have independent learning histories.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
+<div class="card"><h2>🤖 WeatherMind vs NOAA</h2><div id="comparison" class="grid">Waiting for new learned predictions…</div><p class="muted" id="compareNote">Learning corrections activate only after forward-tested evidence of better accuracy.</p></div><div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind maintains independent training histories for each location configured in its scheduled engine. GPS forecasts work anywhere supported by NOAA, but a new location must be configured for scheduled learning.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
 <p class="muted">NOAA forecast estimates are not current station measurements. Learned predictions are tracked separately in the background engine. Forecast coverage is limited to NWS-supported locations in the United States.</p>
 </main><script>
-const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;
+const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;let lastHistory=null;
 function date(s){return new Date(s).toLocaleString([],{weekday:'short',hour:'numeric'});}
 function value(v){return v===null||v===undefined?'--':v;}
 function wind(p){return p.windSpeed||'--';}
@@ -25,7 +25,22 @@ el('days').innerHTML=d.slice(0,14).map(p=>'<div class="day"><b>'+p.name+'</b> �
 el('status').textContent='NOAA forecast refreshed '+new Date().toLocaleTimeString();
 }catch(e){el('status').textContent=e.message;el('status').className='error';el('hours').textContent='Forecast temporarily unavailable.';el('days').textContent='Try again later.';}
 }
-async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;el('saved').textContent=(d.forecasts||[]).filter(r=>r.source==='NWS').length;el('verified').textContent=m?.verified??0;el('model').textContent=m?.model_mae==null?'Training':m.model_mae+'°F';el('baseline').textContent=m?.baseline_mae==null?'Training':m.baseline_mae+'°F';el('history').textContent='Last learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
-el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
+async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;lastHistory=d;showComparison();el('history').textContent='Last learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
+el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh();showComparison()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
+function showComparison(){
+const data=lastHistory,loc=(data?.locations||[]).find(l=>Math.abs(l.lat-lat)<.01&&Math.abs(l.lon-lon)<.01);
+if(!loc){el('comparison').textContent='This location has a live NOAA forecast, but no scheduled WeatherMind learning history yet. Add it to WEATHERMIND_LOCATIONS to enable independent training.';return;}
+const k=loc.lat.toFixed(3)+','+loc.lon.toFixed(3);
+const records=(data.forecasts||[]).filter(r=>r.source==='NWS'&&r.location_key===k&&new Date(r.target)>new Date()).sort((a,b)=>new Date(a.target)-new Date(b.target));
+const latest={};for(const r of records){if(!latest[r.horizon])latest[r.horizon]=r;}
+const selected=['6h','1d','2d','3d','4d','5d','6d','7d'].map(h=>latest[h]).filter(Boolean);
+el('comparison').innerHTML=selected.length?selected.map(r=>'<div class="tile"><small>'+r.horizon+' • '+new Date(r.target).toLocaleString()+'</small><div>NOAA: '+(r.base.temperature??'--')+'°F</div><strong>WeatherMind: '+(r.pred.temperature??'--')+'°F</strong><small>'+((r.validation?.temperature?.status)||'collecting evidence').replaceAll('_',' ')+'</small></div>').join(''):'No future learning predictions published yet. The next successful scheduled run should create them.';
+const metric=data.metrics?.[k+'|6h|temperature'];
+el('saved').textContent=(data.forecasts||[]).filter(r=>r.source==='NWS'&&r.location_key===k).length;
+el('verified').textContent=metric?.verified??0;
+el('model').textContent=metric?.model_mae==null?'Training':metric.model_mae+'°F';
+el('baseline').textContent=metric?.baseline_mae==null?'Training':metric.baseline_mae+'°F';
+el('compareNote').textContent=metric?.verified?'6-hour temperature mean absolute error, measured against nearby station observations.':'Waiting for verified station observations. Corrections are not approved until forward testing shows improvement.';
+}
 refresh();history();setInterval(()=>{refresh();history()},3600000);
 </script></body></html>
