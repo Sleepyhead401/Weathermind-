@@ -26,6 +26,9 @@ jobs:
           python-version: '3.12'
 
       - name: Forecast and evaluate
+        env:
+          WEATHERMIND_REGISTRY_URL: ${{ secrets.WEATHERMIND_REGISTRY_URL }}
+          WEATHERMIND_REGISTRY_TOKEN: ${{ secrets.WEATHERMIND_REGISTRY_TOKEN }}
         run: python engine.py
 
       - name: Save forecast history
