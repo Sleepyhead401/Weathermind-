@@ -48,6 +48,37 @@ def validate(history,target,field):
     approved=learner < base*0.98
     return (adjustment(previous,target,field) if approved else 0.0),{'status':'approved' if approved else 'baseline_safer','tested':len(tests),'test_mae':round(learner,3),'baseline_test_mae':round(base,3)}
 
+def manage_storage(state):
+    """Compact history before pruning. Keep pending forecasts and cumulative metrics."""
+    limit=int(os.getenv('WEATHERMIND_HISTORY_LIMIT_MB','50'))*1024*1024
+    rows=state['forecasts']
+    # Compact old completed records; their essential base/pred/actual data stays intact.
+    from datetime import datetime, timezone, timedelta
+    cutoff=datetime.now(timezone.utc)-timedelta(days=90)
+    compacted=0
+    for row in rows:
+        if len(row.get('actual',{}))==len(FIELDS) and datetime.fromisoformat(row['target'])<cutoff:
+            if row.pop('validation',None) is not None:compacted+=1
+    def size():
+        return len(json.dumps(state,separators=(',',':')).encode('utf-8'))
+    before=size()
+    deleted=0
+    if before>limit*0.90:
+        # Oldest fully verified records first. Never prune pending predictions.
+        eligible=sorted((r for r in rows if len(r.get('actual',{}))==len(FIELDS)),key=lambda r:r['target'])
+        while size()>limit*0.75 and eligible:
+            row=eligible.pop(0)
+            rows.remove(row)
+            deleted+=1
+    storage=state.setdefault('storage',{})
+    storage['limit_bytes']=limit
+    storage['used_bytes_estimate']=size()
+    storage['last_compacted_count']=compacted
+    storage['last_deleted_count']=deleted
+    storage['total_deleted']=storage.get('total_deleted',0)+deleted
+    if compacted or deleted:storage['last_cleanup']=datetime.now(timezone.utc).isoformat()
+    return deleted
+
 def main():
     HISTORY.parent.mkdir(parents=True,exist_ok=True);PUBLIC.parent.mkdir(parents=True,exist_ok=True)
     state=json.loads(HISTORY.read_text()) if HISTORY.exists() else {}
@@ -87,6 +118,19 @@ def main():
     for field in FIELDS:
         checked=[r for r in rows if field in r['actual']]
         state['metrics'][field]={'verified':len(checked),'model_mae':round(sum(abs(r['pred'][field]-r['actual'][field]) for r in checked)/len(checked),3) if checked else None,'baseline_mae':round(sum(abs(r['base'][field]-r['actual'][field]) for r in checked)/len(checked),3) if checked else None}
-    HISTORY.write_text(json.dumps(state,indent=2)+'\n');PUBLIC.write_text(json.dumps(state,indent=2)+'\n')
+    # Preserve lifetime error totals before any deletion so displayed metrics remain meaningful.
+    totals=state.setdefault('lifetime',{})
+    for field in FIELDS:
+        old=totals.setdefault(field,{'count':0,'model_abs_error_sum':0.0,'baseline_abs_error_sum':0.0})
+        for row in rows:
+            if field in row['actual'] and not row.get('_counted_'+field):
+                old['count']+=1
+                old['model_abs_error_sum']+=abs(row['pred'][field]-row['actual'][field])
+                old['baseline_abs_error_sum']+=abs(row['base'][field]-row['actual'][field])
+                row['_counted_'+field]=True
+    manage_storage(state)
+    # Use compact serialization for both active history and published dashboard.
+    payload=json.dumps(state,separators=(',',':'))+'\\n'
+    HISTORY.write_text(payload);PUBLIC.write_text(payload)
     print('Forecasts',len(rows),'last target',target_str)
 if __name__=='__main__':main()
