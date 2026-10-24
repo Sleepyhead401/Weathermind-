@@ -7,7 +7,7 @@
 <div class="card"><h2>🤖 WeatherMind vs NOAA</h2><div id="comparison" class="grid">Waiting for new learned predictions…</div><p class="muted" id="compareNote">Learning corrections activate only after forward-tested evidence of better accuracy.</p></div><div class="card"><h2>🧠 Learning progress</h2><p class="muted">WeatherMind maintains independent training histories for each location configured in its scheduled engine. GPS locations also get a separate on-device learning history when you visit the dashboard. Automatic server-side learning still requires location configuration.</p><div class="grid"><div class="tile">Saved predictions<strong id="saved">--</strong></div><div class="tile">Verified predictions<strong id="verified">--</strong></div><div class="tile">Model error<strong id="model">--</strong></div><div class="tile">NOAA baseline error<strong id="baseline">--</strong></div></div><p class="muted" id="history">Checking saved history…</p></div>
 <p class="muted">NOAA forecast estimates are not current station measurements. Learned predictions are tracked separately in the background engine. Forecast coverage is limited to NWS-supported locations in the United States.</p>
 </main><script>
-const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;let lastHistory=null;let currentPoint=null;
+const el=id=>document.getElementById(id);let lat=41.96,lon=-71.55;let lastHistory=null;let currentPoint=null;const registryEndpoint=localStorage.getItem("weathermind-registry-url")||"";
 function date(s){return new Date(s).toLocaleString([],{weekday:'short',hour:'numeric'});}
 function value(v){return v===null||v===undefined?'--':v;}
 function wind(p){return p.windSpeed||'--';}
@@ -26,7 +26,7 @@ await learnLocal(h,point);el('status').textContent='NOAA forecast refreshed '+ne
 }catch(e){el('status').textContent=e.message;el('status').className='error';el('hours').textContent='Forecast temporarily unavailable.';el('days').textContent='Try again later.';}
 }
 async function history(){try{const r=await fetch('./data.json?x='+Date.now());if(!r.ok)throw Error('No saved history');const d=await r.json(),m=d.metrics?.temperature;lastHistory=d;showComparison();if(!localState().records.length)el('history').textContent='Last server learning run: '+(d.last_run?new Date(d.last_run).toLocaleString():'Not yet')+'. NOAA-based verification may take time.';}catch(e){el('history').textContent='Learning data temporarily unavailable.';}}
-el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh();showComparison()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
+el('gps').onclick=()=>{navigator.geolocation?.getCurrentPosition(p=>{lat=p.coords.latitude;lon=p.coords.longitude;el('place').textContent='📍 Your GPS location';refresh();showComparison();registerArea()},()=>el('status').textContent='Location access unavailable. Default location retained.')};
 
 function gpsKey(){return 'weathermind-gps-v1:'+lat.toFixed(2)+','+lon.toFixed(2);}
 function localState(){try{const v=JSON.parse(localStorage.getItem(gpsKey()));return v&&Array.isArray(v.records)?v:{records:[]};}catch{return {records:[]};}}
@@ -80,7 +80,15 @@ el('model').textContent=mae('pred');el('baseline').textContent=mae('base');
 el('compareNote').textContent='GPS learning is stored only in this browser and checked when this page is opened or refreshed. It cannot run in the background while the page is closed.';
 el('history').textContent='Local GPS history for this area: '+rows.length+' predictions, '+verified.length+' verified. Clearing browser data deletes this local history.';
 }
-\nfunction showComparison(){
+\nasync function registerArea(){
+if(!registryEndpoint){el('compareNote').textContent='GPS learning is saved on this device. Cloud background learning is not configured yet.';return;}
+try{
+const response=await fetch(registryEndpoint+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lat,lon})});
+if(!response.ok)throw Error('Registration failed ('+response.status+')');
+el('compareNote').textContent='GPS area registered for scheduled learning.';
+}catch(error){el('compareNote').textContent='Cloud registration unavailable. On-device GPS learning continues.';}
+}
+function showComparison(){
 const local=localState();if(local.records.length){renderLocal(local);return;}const data=lastHistory,loc=(data?.locations||[]).find(l=>Math.abs(l.lat-lat)<.01&&Math.abs(l.lon-lon)<.01);
 if(!loc){el('comparison').textContent='This location has a live NOAA forecast, but no scheduled WeatherMind learning history yet. Add it to WEATHERMIND_LOCATIONS to enable independent training.';return;}
 const k=loc.lat.toFixed(3)+','+loc.lon.toFixed(3);
